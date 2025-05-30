@@ -36,7 +36,7 @@ Resources:
   S3Stack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/templates/nested-stacks/s3.yaml'
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/templates/nested-stacks/s3.yaml'
       Parameters:
         Environment: !Ref Environment
         ProjectName: !Ref ProjectName
@@ -51,7 +51,7 @@ Resources:
   DynamoDBStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/templates/nested-stacks/dynamodb.yaml'
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/templates/nested-stacks/dynamodb.yaml'
       Parameters:
         Environment: !Ref Environment
         ProjectName: !Ref ProjectName
@@ -67,16 +67,16 @@ Outputs:
     Description: Name of the input S3 bucket
     Value: !GetAtt S3Stack.Outputs.InputBucketName
     Export:
-      Name: !Sub 'pdf-pipeline-\-InputBucket'
+      Name: !Sub 'pdf-pipeline-${Environment}-InputBucket'
 
   OutputBucketName:
     Description: Name of the output S3 bucket
     Value: !GetAtt S3Stack.Outputs.OutputBucketName
     Export:
-      Name: !Sub 'pdf-pipeline-\-OutputBucket'
+      Name: !Sub 'pdf-pipeline-${Environment}-OutputBucket'
 
   DynamoDBTableName:
     Description: Name of the DynamoDB table
     Value: !GetAtt DynamoDBStack.Outputs.TableName
     Export:
-      Name: !Sub 'pdf-pipeline-\-DynamoDBTable'
+      Name: !Sub 'pdf-pipeline-${Environment}-DynamoDBTable'
