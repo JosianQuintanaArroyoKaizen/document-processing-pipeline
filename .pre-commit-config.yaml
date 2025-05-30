@@ -5,12 +5,12 @@
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        exclude: ^infrastructure/.*\.yaml$  # Exclude CloudFormation templates
       - id: check-added-large-files
   - repo: https://github.com/psf/black
     rev: 22.12.0
     hooks:
       - id: black
-        # Using current Python version instead of specifying 3.9
   - repo: https://github.com/pycqa/flake8
     rev: 6.0.0
     hooks:

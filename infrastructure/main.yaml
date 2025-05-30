@@ -1,0 +1,153 @@
+﻿AWSTemplateFormatVersion: '2010-09-09'
+Description: 'PDF Processing Pipeline - Main Stack'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+
+  ProjectName:
+    Type: String
+    Default: pdf-processing-pipeline
+    Description: Name of the project
+
+  S3BucketPrefix:
+    Type: String
+    Default: pdf-proc
+    Description: Prefix for S3 bucket names (will be suffixed with account ID and region)
+
+  TemplateS3Bucket:
+    Type: String
+    Description: S3 bucket containing nested CloudFormation templates
+
+  TemplateS3KeyPrefix:
+    Type: String
+    Default: templates
+    Description: S3 key prefix for nested templates
+
+Mappings:
+  EnvironmentMap:
+    dev:
+      DynamoDBBillingMode: PAY_PER_REQUEST
+      LambdaMemorySize: 256
+      SQSVisibilityTimeout: 360
+    staging:
+      DynamoDBBillingMode: PAY_PER_REQUEST
+      LambdaMemorySize: 512
+      SQSVisibilityTimeout: 360
+    prod:
+      DynamoDBBillingMode: PAY_PER_REQUEST
+      LambdaMemorySize: 512
+      SQSVisibilityTimeout: 360
+
+Resources:
+  # S3 Buckets Stack
+  S3Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/\/nested-stacks/s3.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        S3BucketPrefix: !Ref S3BucketPrefix
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # DynamoDB Stack
+  DynamoDBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/\/nested-stacks/dynamodb.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        BillingMode: !FindInMap [EnvironmentMap, !Ref Environment, DynamoDBBillingMode]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # SQS Stack (we'll create this next)
+  SQSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/\/nested-stacks/sqs.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        VisibilityTimeout: !FindInMap [EnvironmentMap, !Ref Environment, SQSVisibilityTimeout]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # IAM Stack (we'll create this next)
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/\/nested-stacks/iam.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        InputBucketName: !GetAtt S3Stack.Outputs.InputBucketName
+        OutputBucketName: !GetAtt S3Stack.Outputs.OutputBucketName
+        DynamoDBTableName: !GetAtt DynamoDBStack.Outputs.TableName
+        SQSQueueArn: !GetAtt SQSStack.Outputs.MainQueueArn
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Lambda Stack (we'll create this next)
+  LambdaStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: [S3Stack, DynamoDBStack, SQSStack, IAMStack]
+    Properties:
+      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/\/nested-stacks/lambda.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        InputBucketName: !GetAtt S3Stack.Outputs.InputBucketName
+        OutputBucketName: !GetAtt S3Stack.Outputs.OutputBucketName
+        DynamoDBTableName: !GetAtt DynamoDBStack.Outputs.TableName
+        SQSQueueUrl: !GetAtt SQSStack.Outputs.MainQueueUrl
+        LambdaExecutionRoleArn: !GetAtt IAMStack.Outputs.LambdaExecutionRoleArn
+        MemorySize: !FindInMap [EnvironmentMap, !Ref Environment, LambdaMemorySize]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  InputBucketName:
+    Description: Name of the input S3 bucket
+    Value: !GetAtt S3Stack.Outputs.InputBucketName
+    Export:
+      Name: !Sub '\-InputBucket'
+
+  OutputBucketName:
+    Description: Name of the output S3 bucket
+    Value: !GetAtt S3Stack.Outputs.OutputBucketName
+    Export:
+      Name: !Sub '\-OutputBucket'
+
+  DynamoDBTableName:
+    Description: Name of the DynamoDB table
+    Value: !GetAtt DynamoDBStack.Outputs.TableName
+    Export:
+      Name: !Sub '\-DynamoDBTable'
+
+  SQSQueueUrl:
+    Description: URL of the main SQS queue
+    Value: !GetAtt SQSStack.Outputs.MainQueueUrl
+    Export:
+      Name: !Sub '\-SQSQueue'

@@ -1,0 +1,18 @@
+﻿[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "pdf-processing-pipeline"
+  },
+  {
+    "ParameterKey": "S3BucketPrefix",
+    "ParameterValue": "pdf-proc"
+  },
+  {
+    "ParameterKey": "TemplateS3Bucket",
+    "ParameterValue": "pdf-proc-templates-{ACCOUNT-ID}-eu-west-1"
+  }
+]

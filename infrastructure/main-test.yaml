@@ -1,0 +1,82 @@
+﻿AWSTemplateFormatVersion: '2010-09-09'
+Description: 'PDF Processing Pipeline - Main Stack (Test Version)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+
+  ProjectName:
+    Type: String
+    Default: pdf-processing-pipeline
+    Description: Name of the project
+
+  S3BucketPrefix:
+    Type: String
+    Default: pdf-proc
+    Description: Prefix for S3 bucket names (will be suffixed with account ID and region)
+
+  TemplateS3Bucket:
+    Type: String
+    Description: S3 bucket containing nested CloudFormation templates
+
+Mappings:
+  EnvironmentMap:
+    dev:
+      DynamoDBBillingMode: PAY_PER_REQUEST
+    staging:
+      DynamoDBBillingMode: PAY_PER_REQUEST
+    prod:
+      DynamoDBBillingMode: PAY_PER_REQUEST
+
+Resources:
+  # S3 Buckets Stack
+  S3Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/templates/nested-stacks/s3.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        S3BucketPrefix: !Ref S3BucketPrefix
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # DynamoDB Stack
+  DynamoDBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://\.s3.\.amazonaws.com/templates/nested-stacks/dynamodb.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        BillingMode: !FindInMap [EnvironmentMap, !Ref Environment, DynamoDBBillingMode]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  InputBucketName:
+    Description: Name of the input S3 bucket
+    Value: !GetAtt S3Stack.Outputs.InputBucketName
+    Export:
+      Name: !Sub '\-InputBucket'
+
+  OutputBucketName:
+    Description: Name of the output S3 bucket
+    Value: !GetAtt S3Stack.Outputs.OutputBucketName
+    Export:
+      Name: !Sub '\-OutputBucket'
+
+  DynamoDBTableName:
+    Description: Name of the DynamoDB table
+    Value: !GetAtt DynamoDBStack.Outputs.TableName
+    Export:
+      Name: !Sub '\-DynamoDBTable'
