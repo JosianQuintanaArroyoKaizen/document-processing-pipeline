@@ -67,16 +67,16 @@ Outputs:
     Description: Name of the input S3 bucket
     Value: !GetAtt S3Stack.Outputs.InputBucketName
     Export:
-      Name: !Sub '\-InputBucket'
+      Name: !Sub 'pdf-pipeline-\-InputBucket'
 
   OutputBucketName:
     Description: Name of the output S3 bucket
     Value: !GetAtt S3Stack.Outputs.OutputBucketName
     Export:
-      Name: !Sub '\-OutputBucket'
+      Name: !Sub 'pdf-pipeline-\-OutputBucket'
 
   DynamoDBTableName:
     Description: Name of the DynamoDB table
     Value: !GetAtt DynamoDBStack.Outputs.TableName
     Export:
-      Name: !Sub '\-DynamoDBTable'
+      Name: !Sub 'pdf-pipeline-\-DynamoDBTable'
