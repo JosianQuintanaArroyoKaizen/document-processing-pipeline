@@ -172,3 +172,22 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Environment and IDE
+.env
+.vscode/settings.json
+*.pyc
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# AWS and deployment
+.aws/
+*.zip
+build/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
