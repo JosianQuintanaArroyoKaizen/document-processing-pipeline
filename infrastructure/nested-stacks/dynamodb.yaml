@@ -14,7 +14,7 @@ Resources:
   ProcessingStatusTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '\-processing-status-\'
+      TableName: !Sub '${ProjectName}-processing-status-${Environment}'
       BillingMode: !Ref BillingMode
       AttributeDefinitions:
         - AttributeName: file_key

@@ -14,7 +14,7 @@ Resources:
   InputBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub '\-input-\-\-\'
+      BucketName: !Sub '${S3BucketPrefix}-input-${Environment}-${AWS::AccountId}-${AWS::Region}'
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -43,7 +43,7 @@ Resources:
   OutputBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub '\-output-\-\-\'
+      BucketName: !Sub '${S3BucketPrefix}-output-${Environment}-${AWS::AccountId}-${AWS::Region}'
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -80,7 +80,7 @@ Resources:
             Principal: '*'
             Action: 's3:*'
             Resource:
-              - !Sub '\/*'
+              - !Sub '${OutputBucket}/*'
               - !Ref OutputBucket
             Condition:
               Bool:
