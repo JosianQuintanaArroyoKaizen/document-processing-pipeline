@@ -68,24 +68,6 @@ Resources:
         - Key: Purpose
           Value: Processed Text Storage
 
-  # Bucket policy for output bucket
-  OutputBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref OutputBucket
-      PolicyDocument:
-        Statement:
-          - Sid: DenyInsecureConnections
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
-            Resource:
-              - !Sub '${OutputBucket}/*'
-              - !Ref OutputBucket
-            Condition:
-              Bool:
-                'aws:SecureTransport': 'false'
-
 Outputs:
   InputBucketName:
     Description: Name of the input S3 bucket
