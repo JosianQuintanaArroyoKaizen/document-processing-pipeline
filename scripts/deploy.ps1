@@ -33,12 +33,12 @@ switch ($Component) {
         Deploy-Component "DynamoDB" "pdf-dynamodb-$Environment" "infrastructure/dynamodb.yaml"
     }
     "lambda" { 
-        Deploy-Component "Lambda" "pdf-lambda-$Environment" "infrastructure/lambda.yaml"
+        Deploy-Component "Lambda Functions" "pdf-lambda-$Environment" "infrastructure/lambda.yaml"
     }
     "all" {
         Deploy-Component "S3" "pdf-s3-$Environment" "infrastructure/s3.yaml"
         Deploy-Component "DynamoDB" "pdf-dynamodb-$Environment" "infrastructure/dynamodb.yaml"
-        Deploy-Component "Lambda" "pdf-lambda-$Environment" "infrastructure/lambda.yaml"
+        Deploy-Component "Lambda Functions" "pdf-lambda-$Environment" "infrastructure/lambda.yaml"
     }
 }
 

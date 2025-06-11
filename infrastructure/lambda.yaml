@@ -26,7 +26,7 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:PutObject
-                Resource:
+                Resource: 
                   - !Sub 'arn:aws:s3:::pdf-input-${Environment}-${AWS::AccountId}-${AWS::Region}/*'
                   - !Sub 'arn:aws:s3:::pdf-output-${Environment}-${AWS::AccountId}-${AWS::Region}/*'
         - PolicyName: DynamoDBAccess
@@ -39,7 +39,110 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:UpdateItem
                 Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/pdf-processing-${Environment}'
+        - PolicyName: LambdaInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*-processor-${Environment}'
 
+  # Router Lambda
+  DocumentRouter:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'document-router-${Environment}'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime
+          
+          lambda_client = boto3.client('lambda')
+          dynamodb = boto3.resource('dynamodb')
+          
+          def lambda_handler(event, context):
+              print(f"Router Event: {json.dumps(event)}")
+              
+              function_name = context.function_name
+              env = function_name.split('-')[-1]
+              
+              table_name = f'pdf-processing-{env}'
+              table = dynamodb.Table(table_name)
+              
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  print(f"Routing file: {key}")
+                  
+                  # Log initial routing
+                  table.put_item(Item={
+                      'file_key': key,
+                      'status': 'ROUTING',
+                      'timestamp': datetime.now().isoformat(),
+                      'bucket': bucket
+                  })
+                  
+                  # Determine processor based on file extension
+                  file_ext = key.lower().split('.')[-1]
+                  
+                  processor_map = {
+                      'pdf': f'pdf-processor-{env}',
+                      'png': f'image-processor-{env}',
+                      'jpg': f'image-processor-{env}',
+                      'jpeg': f'image-processor-{env}',
+                      'csv': f'csv-processor-{env}',
+                      'txt': f'text-processor-{env}',
+                      'md': f'text-processor-{env}'
+                  }
+                  
+                  processor_function = processor_map.get(file_ext)
+                  
+                  if processor_function:
+                      try:
+                          # Invoke specific processor
+                          lambda_client.invoke(
+                              FunctionName=processor_function,
+                              InvocationType='Event',  # Async
+                              Payload=json.dumps(event)
+                          )
+                          
+                          table.put_item(Item={
+                              'file_key': key,
+                              'status': 'ROUTED',
+                              'timestamp': datetime.now().isoformat(),
+                              'bucket': bucket,
+                              'processor': processor_function
+                          })
+                          
+                      except Exception as e:
+                          print(f"Routing error for {key}: {str(e)}")
+                          table.put_item(Item={
+                              'file_key': key,
+                              'status': 'ROUTING_FAILED',
+                              'timestamp': datetime.now().isoformat(),
+                              'bucket': bucket,
+                              'error': str(e)
+                          })
+                  else:
+                      print(f"No processor for file type: {file_ext}")
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'UNSUPPORTED_TYPE',
+                          'timestamp': datetime.now().isoformat(),
+                          'bucket': bucket,
+                          'file_type': file_ext
+                      })
+              
+              return {"statusCode": 200, "body": "Routing complete"}
+
+  # PDF Processor
   PDFProcessor:
     Type: AWS::Lambda::Function
     Properties:
@@ -47,15 +150,329 @@ Resources:
       Runtime: python3.9
       Handler: index.lambda_handler
       Role: !GetAtt LambdaRole.Arn
+      Timeout: 300
+      MemorySize: 512
       Code:
         ZipFile: |
           import json
+          import boto3
+          from datetime import datetime
+          
+          s3 = boto3.client('s3')
+          dynamodb = boto3.resource('dynamodb')
+          
           def lambda_handler(event, context):
-              print(f"Event: {json.dumps(event)}")
-              return {"statusCode": 200, "body": "Hello from Lambda"}
+              print(f"PDF Processor Event: {json.dumps(event)}")
+              
+              function_name = context.function_name
+              env = function_name.split('-')[-1]
+              
+              table_name = f'pdf-processing-{env}'
+              table = dynamodb.Table(table_name)
+              
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  try:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'PDF_PROCESSING',
+                          'timestamp': datetime.now().isoformat(),
+                          'processor': 'pdf-processor'
+                      })
+                      
+                      # TODO: Add PyPDF2 or similar library via Lambda Layer
+                      # For now, placeholder processing
+                      text_content = f"PDF processing placeholder for: {key}\nRequires PDF library layer"
+                      
+                      output_bucket = bucket.replace('input', 'output')
+                      output_key = f"pdf-extracted/{key}.txt"
+                      
+                      s3.put_object(
+                          Bucket=output_bucket,
+                          Key=output_key,
+                          Body=text_content,
+                          ContentType='text/plain'
+                      )
+                      
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'PDF_COMPLETED',
+                          'timestamp': datetime.now().isoformat(),
+                          'output_key': output_key,
+                          'processor': 'pdf-processor'
+                      })
+                      
+                  except Exception as e:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'PDF_FAILED',
+                          'timestamp': datetime.now().isoformat(),
+                          'error': str(e),
+                          'processor': 'pdf-processor'
+                      })
+              
+              return {"statusCode": 200, "body": "PDF processing complete"}
+
+  # Image Processor
+  ImageProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'image-processor-${Environment}'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from datetime import datetime
+          
+          s3 = boto3.client('s3')
+          dynamodb = boto3.resource('dynamodb')
+          
+          def lambda_handler(event, context):
+              print(f"Image Processor Event: {json.dumps(event)}")
+              
+              function_name = context.function_name
+              env = function_name.split('-')[-1]
+              
+              table_name = f'pdf-processing-{env}'
+              table = dynamodb.Table(table_name)
+              
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  try:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'IMAGE_PROCESSING',
+                          'timestamp': datetime.now().isoformat(),
+                          'processor': 'image-processor'
+                      })
+                      
+                      # TODO: Add OCR library (Tesseract) via Lambda Layer
+                      # For now, placeholder processing
+                      text_content = f"Image OCR placeholder for: {key}\nRequires Tesseract/PIL libraries"
+                      
+                      output_bucket = bucket.replace('input', 'output')
+                      output_key = f"image-extracted/{key}.txt"
+                      
+                      s3.put_object(
+                          Bucket=output_bucket,
+                          Key=output_key,
+                          Body=text_content,
+                          ContentType='text/plain'
+                      )
+                      
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'IMAGE_COMPLETED',
+                          'timestamp': datetime.now().isoformat(),
+                          'output_key': output_key,
+                          'processor': 'image-processor'
+                      })
+                      
+                  except Exception as e:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'IMAGE_FAILED',
+                          'timestamp': datetime.now().isoformat(),
+                          'error': str(e),
+                          'processor': 'image-processor'
+                      })
+              
+              return {"statusCode": 200, "body": "Image processing complete"}
+
+  # CSV Processor
+  CSVProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'csv-processor-${Environment}'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import csv
+          import io
+          from datetime import datetime
+          
+          s3 = boto3.client('s3')
+          dynamodb = boto3.resource('dynamodb')
+          
+          def lambda_handler(event, context):
+              print(f"CSV Processor Event: {json.dumps(event)}")
+              
+              function_name = context.function_name
+              env = function_name.split('-')[-1]
+              
+              table_name = f'pdf-processing-{env}'
+              table = dynamodb.Table(table_name)
+              
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  try:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'CSV_PROCESSING',
+                          'timestamp': datetime.now().isoformat(),
+                          'processor': 'csv-processor'
+                      })
+                      
+                      response = s3.get_object(Bucket=bucket, Key=key)
+                      csv_content = response['Body'].read().decode('utf-8')
+                      
+                      # Parse CSV and create summary
+                      csv_reader = csv.reader(io.StringIO(csv_content))
+                      rows = list(csv_reader)
+                      
+                      summary = f"CSV Analysis for: {key}\n"
+                      summary += f"Total rows: {len(rows)}\n"
+                      if rows:
+                          summary += f"Columns: {len(rows[0])}\n"
+                          summary += f"Headers: {', '.join(rows[0])}\n"
+                          summary += f"\nFirst 5 rows:\n"
+                          for i, row in enumerate(rows[:6]):  # Header + 5 rows
+                              summary += f"Row {i}: {', '.join(row)}\n"
+                      
+                      output_bucket = bucket.replace('input', 'output')
+                      output_key = f"csv-analyzed/{key}_summary.txt"
+                      
+                      s3.put_object(
+                          Bucket=output_bucket,
+                          Key=output_key,
+                          Body=summary,
+                          ContentType='text/plain'
+                      )
+                      
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'CSV_COMPLETED',
+                          'timestamp': datetime.now().isoformat(),
+                          'output_key': output_key,
+                          'row_count': len(rows),
+                          'processor': 'csv-processor'
+                      })
+                      
+                  except Exception as e:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'CSV_FAILED',
+                          'timestamp': datetime.now().isoformat(),
+                          'error': str(e),
+                          'processor': 'csv-processor'
+                      })
+              
+              return {"statusCode": 200, "body": "CSV processing complete"}
+
+  # Text Processor
+  TextProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'text-processor-${Environment}'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from datetime import datetime
+          
+          s3 = boto3.client('s3')
+          dynamodb = boto3.resource('dynamodb')
+          
+          def lambda_handler(event, context):
+              print(f"Text Processor Event: {json.dumps(event)}")
+              
+              function_name = context.function_name
+              env = function_name.split('-')[-1]
+              
+              table_name = f'pdf-processing-{env}'
+              table = dynamodb.Table(table_name)
+              
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  try:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'TEXT_PROCESSING',
+                          'timestamp': datetime.now().isoformat(),
+                          'processor': 'text-processor'
+                      })
+                      
+                      response = s3.get_object(Bucket=bucket, Key=key)
+                      text_content = response['Body'].read().decode('utf-8')
+                      
+                      # Basic text analysis
+                      lines = text_content.split('\n')
+                      words = text_content.split()
+                      
+                      analysis = f"Text Analysis for: {key}\n"
+                      analysis += f"Characters: {len(text_content)}\n"
+                      analysis += f"Lines: {len(lines)}\n"
+                      analysis += f"Words: {len(words)}\n"
+                      analysis += f"\nContent:\n{text_content}"
+                      
+                      output_bucket = bucket.replace('input', 'output')
+                      output_key = f"text-analyzed/{key}_analysis.txt"
+                      
+                      s3.put_object(
+                          Bucket=output_bucket,
+                          Key=output_key,
+                          Body=analysis,
+                          ContentType='text/plain'
+                      )
+                      
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'TEXT_COMPLETED',
+                          'timestamp': datetime.now().isoformat(),
+                          'output_key': output_key,
+                          'word_count': len(words),
+                          'processor': 'text-processor'
+                      })
+                      
+                  except Exception as e:
+                      table.put_item(Item={
+                          'file_key': key,
+                          'status': 'TEXT_FAILED',
+                          'timestamp': datetime.now().isoformat(),
+                          'error': str(e),
+                          'processor': 'text-processor'
+                      })
+              
+              return {"statusCode": 200, "body": "Text processing complete"}
 
 Outputs:
-  LambdaFunction:
+  DocumentRouter:
+    Value: !Ref DocumentRouter
+    Export:
+      Name: !Sub '${AWS::StackName}-DocumentRouter'
+  PDFProcessor:
     Value: !Ref PDFProcessor
     Export:
-      Name: !Sub '${AWS::StackName}-LambdaFunction'
+      Name: !Sub '${AWS::StackName}-PDFProcessor'
+  ImageProcessor:
+    Value: !Ref ImageProcessor
+    Export:
+      Name: !Sub '${AWS::StackName}-ImageProcessor'
+  CSVProcessor:
+    Value: !Ref CSVProcessor
+    Export:
+      Name: !Sub '${AWS::StackName}-CSVProcessor'
+  TextProcessor:
+    Value: !Ref TextProcessor
+    Export:
+      Name: !Sub '${AWS::StackName}-TextProcessor'
