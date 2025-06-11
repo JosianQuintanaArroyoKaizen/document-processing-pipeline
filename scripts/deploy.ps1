@@ -1,51 +1,45 @@
-﻿# PDF Processing Pipeline Deployment Script for PowerShell
-# This script deploys the infrastructure to eu-west-1
-
 param(
-    [Parameter(Mandatory=$true)]
-    [ValidateSet("dev", "staging", "prod")]
-    [string]$Environment
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("s3", "dynamodb", "lambda", "all")]
+    [string]$Component,
+    
+    [string]$Environment = "dev",
+    [string]$Region = "eu-west-1"
 )
 
-$Region = "eu-west-1"
-$ProjectName = "pdf-processing-pipeline"
-
-Write-Host "Deploying to environment: $Environment in region: $Region" -ForegroundColor Green
-
-# Get AWS Account ID
-$AccountId = (aws sts get-caller-identity --query Account --output text --region $Region)
-Write-Host "AWS Account ID: $AccountId" -ForegroundColor Yellow
-
-# Create template bucket name
-$TemplateBucket = "$ProjectName-templates-$AccountId-$Region"
-Write-Host "Template bucket: $TemplateBucket" -ForegroundColor Yellow
-
-# Check if template bucket exists
-try {
-    aws s3api head-bucket --bucket $TemplateBucket --region $Region 2>$null
-    Write-Host "Template bucket already exists: $TemplateBucket" -ForegroundColor Green
-} catch {
-    Write-Host "Creating template bucket: $TemplateBucket" -ForegroundColor Yellow
-
-    # Create bucket
-    aws s3api create-bucket --bucket $TemplateBucket --region $Region --create-bucket-configuration LocationConstraint=$Region
-
-    # Enable versioning
-    aws s3api put-bucket-versioning --bucket $TemplateBucket --versioning-configuration Status=Enabled --region $Region
-
-    Write-Host "Template bucket created successfully!" -ForegroundColor Green
+function Deploy-Component {
+    param($ComponentName, $StackName, $TemplateFile, $ExtraParams = @())
+    
+    Write-Host "Deploying $ComponentName..." -ForegroundColor Green
+    
+    $params = @(
+        "Environment=$Environment",
+        "Region=$Region"
+    ) + $ExtraParams
+    
+    aws cloudformation deploy `
+        --template-file $TemplateFile `
+        --stack-name $StackName `
+        --parameter-overrides $params `
+        --capabilities CAPABILITY_IAM `
+        --region $Region
 }
 
-# Upload nested templates
-Write-Host "Uploading nested templates..." -ForegroundColor Yellow
-aws s3 sync infrastructure/nested-stacks/ s3://$TemplateBucket/templates/nested-stacks/ --region $Region
+switch ($Component) {
+    "s3" { 
+        Deploy-Component "S3" "pdf-s3-$Environment" "infrastructure/s3.yaml"
+    }
+    "dynamodb" { 
+        Deploy-Component "DynamoDB" "pdf-dynamodb-$Environment" "infrastructure/dynamodb.yaml"
+    }
+    "lambda" { 
+        Deploy-Component "Lambda" "pdf-lambda-$Environment" "infrastructure/lambda.yaml"
+    }
+    "all" {
+        Deploy-Component "S3" "pdf-s3-$Environment" "infrastructure/s3.yaml"
+        Deploy-Component "DynamoDB" "pdf-dynamodb-$Environment" "infrastructure/dynamodb.yaml"
+        Deploy-Component "Lambda" "pdf-lambda-$Environment" "infrastructure/lambda.yaml"
+    }
+}
 
-# Update parameter file with actual bucket name
-$ParamContent = Get-Content "infrastructure\parameters\$Environment.json" -Raw
-$UpdatedParams = $ParamContent -replace "{ACCOUNT-ID}", $AccountId
-$UpdatedParams | Out-File -FilePath "infrastructure\parameters\$Environment-updated.json" -Encoding UTF8
-
-Write-Host "Ready to deploy CloudFormation stack!" -ForegroundColor Green
-Write-Host "Template bucket: $TemplateBucket" -ForegroundColor Cyan
-Write-Host "Region: $Region" -ForegroundColor Cyan
-Write-Host "Environment: $Environment" -ForegroundColor Cyan
+Write-Host "Deployment complete!" -ForegroundColor Green
