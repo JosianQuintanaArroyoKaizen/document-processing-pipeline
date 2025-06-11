@@ -1,0 +1,70 @@
+name: Deploy PDF Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, staging, prod]
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'eu-west-1'
+        type: choice
+        options: [eu-west-1, us-east-1, us-west-2]
+      component:
+        description: 'Component to deploy'
+        required: true
+        default: 's3'
+        type: choice
+        options: [s3, dynamodb, lambda, all]
+
+env:
+  AWS_REGION: ${{ github.event.inputs.region }}
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Deploy S3
+      if: ${{ github.event.inputs.component == 's3' || github.event.inputs.component == 'all' }}
+      run: |
+        aws cloudformation deploy \
+          --template-file infrastructure/s3.yaml \
+          --stack-name pdf-s3-${{ env.ENVIRONMENT }} \
+          --parameter-overrides Environment=${{ env.ENVIRONMENT }} Region=${{ env.AWS_REGION }} \
+          --region ${{ env.AWS_REGION }}
+    
+    - name: Deploy DynamoDB
+      if: ${{ github.event.inputs.component == 'dynamodb' || github.event.inputs.component == 'all' }}
+      run: |
+        aws cloudformation deploy \
+          --template-file infrastructure/dynamodb.yaml \
+          --stack-name pdf-dynamodb-${{ env.ENVIRONMENT }} \
+          --parameter-overrides Environment=${{ env.ENVIRONMENT }} Region=${{ env.AWS_REGION }} \
+          --region ${{ env.AWS_REGION }}
+    
+    - name: Deploy Lambda
+      if: ${{ github.event.inputs.component == 'lambda' || github.event.inputs.component == 'all' }}
+      run: |
+        aws cloudformation deploy \
+          --template-file infrastructure/lambda.yaml \
+          --stack-name pdf-lambda-${{ env.ENVIRONMENT }} \
+          --parameter-overrides Environment=${{ env.ENVIRONMENT }} Region=${{ env.AWS_REGION }} \
+          --capabilities CAPABILITY_IAM \
+          --region ${{ env.AWS_REGION }}

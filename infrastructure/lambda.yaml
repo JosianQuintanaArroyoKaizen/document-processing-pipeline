@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+
+Resources:
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  PDFProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'pdf-processor-${Environment}'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              print(f"Event: {json.dumps(event)}")
+              return {"statusCode": 200, "body": "Hello from Lambda"}
+
+Outputs:
+  LambdaFunction:
+    Value: !Ref PDFProcessor
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunction'
