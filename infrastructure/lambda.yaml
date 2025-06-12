@@ -142,7 +142,7 @@ Resources:
               
               return {"statusCode": 200, "body": "Routing complete"}
 
-  # PDF Processor
+  # PDF Processor with Layer
   PDFProcessor:
     Type: AWS::Lambda::Function
     Properties:
@@ -151,15 +151,41 @@ Resources:
       Handler: index.lambda_handler
       Role: !GetAtt LambdaRole.Arn
       Timeout: 300
-      MemorySize: 512
+      MemorySize: 1024
+      Layers:
+        - !ImportValue 
+            Fn::Sub: 'pdf-layers-${Environment}-PDFProcessingLayer'
       Code:
         ZipFile: |
           import json
           import boto3
+          import PyPDF2
+          import pdfplumber
+          import io
           from datetime import datetime
           
           s3 = boto3.client('s3')
           dynamodb = boto3.resource('dynamodb')
+          
+          def extract_text_pypdf2(pdf_bytes):
+              """Extract text using PyPDF2"""
+              pdf_file = io.BytesIO(pdf_bytes)
+              pdf_reader = PyPDF2.PdfReader(pdf_file)
+              text = ""
+              for page in pdf_reader.pages:
+                  text += page.extract_text() + "\n"
+              return text
+          
+          def extract_text_pdfplumber(pdf_bytes):
+              """Extract text using pdfplumber (better for tables)"""
+              pdf_file = io.BytesIO(pdf_bytes)
+              text = ""
+              with pdfplumber.open(pdf_file) as pdf:
+                  for page in pdf.pages:
+                      page_text = page.extract_text()
+                      if page_text:
+                          text += page_text + "\n"
+              return text
           
           def lambda_handler(event, context):
               print(f"PDF Processor Event: {json.dumps(event)}")
@@ -182,9 +208,30 @@ Resources:
                           'processor': 'pdf-processor'
                       })
                       
-                      # TODO: Add PyPDF2 or similar library via Lambda Layer
-                      # For now, placeholder processing
-                      text_content = f"PDF processing placeholder for: {key}\nRequires PDF library layer"
+                      # Download PDF from S3
+                      response = s3.get_object(Bucket=bucket, Key=key)
+                      pdf_bytes = response['Body'].read()
+                      
+                      # Extract text using both methods
+                      try:
+                          text_pypdf2 = extract_text_pypdf2(pdf_bytes)
+                          text_pdfplumber = extract_text_pdfplumber(pdf_bytes)
+                          
+                          # Use pdfplumber result if it's longer (often better)
+                          extracted_text = text_pdfplumber if len(text_pdfplumber) > len(text_pypdf2) else text_pypdf2
+                          
+                          if not extracted_text.strip():
+                              extracted_text = "No text could be extracted from this PDF"
+                          
+                      except Exception as extract_error:
+                          extracted_text = f"Text extraction failed: {str(extract_error)}"
+                      
+                      # Create analysis
+                      analysis = f"PDF Analysis for: {key}\n"
+                      analysis += f"File size: {len(pdf_bytes)} bytes\n"
+                      analysis += f"Text length: {len(extracted_text)} characters\n"
+                      analysis += f"Word count: {len(extracted_text.split())}\n"
+                      analysis += f"\nExtracted Text:\n{extracted_text}"
                       
                       output_bucket = bucket.replace('input', 'output')
                       output_key = f"pdf-extracted/{key}.txt"
@@ -192,7 +239,7 @@ Resources:
                       s3.put_object(
                           Bucket=output_bucket,
                           Key=output_key,
-                          Body=text_content,
+                          Body=analysis,
                           ContentType='text/plain'
                       )
                       
@@ -201,10 +248,13 @@ Resources:
                           'status': 'PDF_COMPLETED',
                           'timestamp': datetime.now().isoformat(),
                           'output_key': output_key,
+                          'text_length': len(extracted_text),
+                          'word_count': len(extracted_text.split()),
                           'processor': 'pdf-processor'
                       })
                       
                   except Exception as e:
+                      print(f"PDF processing error: {str(e)}")
                       table.put_item(Item={
                           'file_key': key,
                           'status': 'PDF_FAILED',
@@ -215,7 +265,7 @@ Resources:
               
               return {"statusCode": 200, "body": "PDF processing complete"}
 
-  # Image Processor
+  # Image Processor with Layer
   ImageProcessor:
     Type: AWS::Lambda::Function
     Properties:
@@ -224,11 +274,20 @@ Resources:
       Handler: index.lambda_handler
       Role: !GetAtt LambdaRole.Arn
       Timeout: 300
-      MemorySize: 1024
+      MemorySize: 2048
+      Layers:
+        - !ImportValue 
+            Fn::Sub: 'pdf-layers-${Environment}-ImageProcessingLayer'
+      Environment:
+        Variables:
+          TESSDATA_PREFIX: '/opt/python/usr/share/tesseract-ocr/4.00/tessdata'
       Code:
         ZipFile: |
           import json
           import boto3
+          import pytesseract
+          from PIL import Image
+          import io
           from datetime import datetime
           
           s3 = boto3.client('s3')
@@ -255,9 +314,37 @@ Resources:
                           'processor': 'image-processor'
                       })
                       
-                      # TODO: Add OCR library (Tesseract) via Lambda Layer
-                      # For now, placeholder processing
-                      text_content = f"Image OCR placeholder for: {key}\nRequires Tesseract/PIL libraries"
+                      # Download image from S3
+                      response = s3.get_object(Bucket=bucket, Key=key)
+                      image_bytes = response['Body'].read()
+                      
+                      # Open image with Pillow
+                      image = Image.open(io.BytesIO(image_bytes))
+                      
+                      # Get image info
+                      image_info = {
+                          'format': image.format,
+                          'size': image.size,
+                          'mode': image.mode
+                      }
+                      
+                      # Perform OCR
+                      try:
+                          extracted_text = pytesseract.image_to_string(image)
+                          if not extracted_text.strip():
+                              extracted_text = "No text detected in image"
+                      except Exception as ocr_error:
+                          extracted_text = f"OCR failed: {str(ocr_error)}\nNote: Tesseract may not be properly configured in Lambda layer"
+                      
+                      # Create analysis
+                      analysis = f"Image OCR Analysis for: {key}\n"
+                      analysis += f"Format: {image_info['format']}\n"
+                      analysis += f"Size: {image_info['size'][0]}x{image_info['size'][1]}\n"
+                      analysis += f"Mode: {image_info['mode']}\n"
+                      analysis += f"File size: {len(image_bytes)} bytes\n"
+                      analysis += f"Text length: {len(extracted_text)} characters\n"
+                      analysis += f"Word count: {len(extracted_text.split())}\n"
+                      analysis += f"\nExtracted Text:\n{extracted_text}"
                       
                       output_bucket = bucket.replace('input', 'output')
                       output_key = f"image-extracted/{key}.txt"
@@ -265,7 +352,7 @@ Resources:
                       s3.put_object(
                           Bucket=output_bucket,
                           Key=output_key,
-                          Body=text_content,
+                          Body=analysis,
                           ContentType='text/plain'
                       )
                       
@@ -274,10 +361,15 @@ Resources:
                           'status': 'IMAGE_COMPLETED',
                           'timestamp': datetime.now().isoformat(),
                           'output_key': output_key,
+                          'text_length': len(extracted_text),
+                          'word_count': len(extracted_text.split()),
+                          'image_format': image_info['format'],
+                          'image_size': f"{image_info['size'][0]}x{image_info['size'][1]}",
                           'processor': 'image-processor'
                       })
                       
                   except Exception as e:
+                      print(f"Image processing error: {str(e)}")
                       table.put_item(Item={
                           'file_key': key,
                           'status': 'IMAGE_FAILED',
