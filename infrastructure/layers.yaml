@@ -3,13 +3,6 @@ Parameters:
   Environment:
     Type: String
     Default: dev
-  DeployLayers:
-    Type: String
-    Default: 'false'
-    AllowedValues: ['true', 'false']
-
-Conditions:
-  ShouldDeployLayers: !Equals [!Ref DeployLayers, 'true']
 
 Resources:
   LayersBucket:
@@ -24,7 +17,6 @@ Resources:
 
   PDFProcessingLayer:
     Type: AWS::Lambda::LayerVersion
-    Condition: ShouldDeployLayers
     Properties:
       LayerName: !Sub 'pdf-processing-layer-${Environment}'
       Description: 'PDF processing libraries: PyPDF2, pdfplumber'
@@ -36,32 +28,12 @@ Resources:
         - python3.10
         - python3.11
 
-  ImageProcessingLayer:
-    Type: AWS::Lambda::LayerVersion
-    Condition: ShouldDeployLayers
-    Properties:
-      LayerName: !Sub 'image-processing-layer-${Environment}'
-      Description: 'Image OCR libraries: Pillow, pytesseract'
-      Content:
-        S3Bucket: !Ref LayersBucket
-        S3Key: 'image-layer.zip'
-      CompatibleRuntimes:
-        - python3.9
-        - python3.10
-        - python3.11
-
 Outputs:
   LayersBucket:
     Value: !Ref LayersBucket
     Export:
       Name: !Sub '${AWS::StackName}-LayersBucket'
   PDFProcessingLayer:
-    Condition: ShouldDeployLayers
     Value: !Ref PDFProcessingLayer
     Export:
       Name: !Sub '${AWS::StackName}-PDFProcessingLayer'
-  ImageProcessingLayer:
-    Condition: ShouldDeployLayers
-    Value: !Ref ImageProcessingLayer
-    Export:
-      Name: !Sub '${AWS::StackName}-ImageProcessingLayer'
